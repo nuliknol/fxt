@@ -1,0 +1,2 @@
+leak:libamdhip64.so
+leak:libhsa-runtime64.so

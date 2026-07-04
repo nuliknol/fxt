@@ -1,0 +1,36 @@
+› for 'trend' class, what is the field that represents weakness of the trend? like a linear degree of
+  how bad is it
+
+
+• For trend, the main linear “how bad is it” field is:
+
+  - relative_trend_quality_raw
+
+  Lower is better.
+  Higher means weaker / dirtier / more exhausted trend structure.
+
+  That is the best continuous weakness measure currently in the model.
+
+  Related fields:
+
+  - relative_trend_quality_bucket
+      - coarse bucket 0..7
+      - useful for grouping, but not as fine as the raw value
+  - fit_error
+      - also continuous, but it is class-fit error, not purely trend weakness
+  - knn_distance_exhaustion
+      - useful as an additional weakness/exhaustion signal
+  - knn_margin
+      - if it drops or turns unfavorable, the token looks less like continuation and more like
+        exhaustion
+
+  So if you want one primary weakness field for trend, use:
+
+  - relative_trend_quality_raw
+
+  Interpretation:
+
+  - low relative_trend_quality_raw -> strong clean trend
+  - high relative_trend_quality_raw -> weak / degraded trend
+
+  That is the closest thing to a linear trend-quality score in the current system.

@@ -1,0 +1,70 @@
+  Common
+  These affect all HarvestMode values:
+
+  - MinOrderProfitPips
+  - CloseSafetyPips
+  - MinTotalProfitPipsToHarvest
+  - MinProfitableOrdersToHarvest
+  - UseSpreadFilter
+  - MaxSpreadPips
+  - UseSpreadJumpFilter
+  - SpreadSampleTicks
+  - MaxSpreadJumpPips
+
+  STALL_CANDLE
+  Tune:
+
+  - StallMinWindowBars in Harvester.mq4:29
+  - StallMaxWindowBars in Harvester.mq4:30
+  - StallBoxMaxPips in Harvester.mq4:31
+  - StallTrendProgressMaxPips in Harvester.mq4:32
+  - StallSignalThreshold in Harvester.mq4:33
+
+  SMALL_RANGE_COMPRESSION
+  Tune:
+
+  - CompressionLookbackBars
+  - CompressionRangeMaxPips
+
+  OPPOSITE_CANDLE
+  Tune:
+
+  - OppositeCandlesRequired
+  - OppositeMinBodyPips
+  - OppositeMinBodyRatio
+
+  WICK_REJECTION
+  Tune:
+
+  - WickRatioMin
+  - WickMinPips
+  - RequireCloseAgainstDirection
+
+
+  PROFIT_GIVEBACK
+  Tune:
+
+  - MinPeakProfitPips
+  - MaxProfitGivebackPercent
+
+  HYBRID_SOFT_WEIGHTED
+  Tune:
+
+  - W_Stall
+  - W_Compression
+  - W_OppositeCandle
+  - W_Wick
+  - W_Giveback
+  - UseNormalizedHybridScore
+  - HarvestThresholdRatio
+  - HarvestScoreThreshold
+
+  Grid / trade behavior
+  Not harvest-specific, but they strongly change all harvest results:
+
+  - GridStepPips
+  - MaxOrders
+  - SlippagePips
+  - TradeDirection
+  - LotSize
+

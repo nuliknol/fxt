@@ -1,0 +1,198 @@
+Brute forcing all feature combinations is a reasonable starting instinct, but I would not do raw
+  exhaustive search first. The search space will explode, and many combinations will look “good” only
+  because they overfit one dataset.
+
+  What I would suggest is a staged approach.
+
+  First, define a feature library, exactly as you said. Group features into families:
+
+  - trend structure: bull count, bear count, run lengths, sign changes
+  - volatility: total range, avg range, wick/body ratios, total wick ratio
+  - shape asymmetry: upper vs lower wick dominance, rejection patterns
+  - progression: early-strength vs late-strength inside the block
+  - persistence: smooth trend vs noisy trend
+  - regime context: compression, expansion, reversal pressure
+
+  Second, define candidate distance templates, not arbitrary feature subsets. For example:
+
+  - trend-only distance
+  - trend + volatility
+  - trend + volatility + asymmetry
+  - reversal-aware
+  - range-aware
+  - continuation-aware
+
+  That is better than blind subset search because it keeps the search interpretable.
+
+  Third, define what “good” means before searching. This is the critical part. If you do not define
+  evaluation properly, the best distance will just be the one that creates visually neat but useless
+  clusters.
+
+  I would evaluate a distance function on:
+
+  - compression ratio: how many clusters vs how many blocks
+  - purity/stability: same dataset permutations produce same clusters
+  - separation: members inside cluster close, clusters apart
+  - forecasting usefulness: do clusters predict different next-return / next-volatility distributions
+  - regime usefulness: do cluster labels correspond to meaningful forex states like trend, reversal,
+    range, exhaustion
+  - redundancy: how many clusters are near-duplicates of each other
+
+  That last point matters because you already observed many clusters are basically the same family with
+  different strength.
+
+  Fourth, search in two levels:
+
+  1. feature-selection search
+
+  - which feature families belong in the distance
+
+  2. parameter search
+
+  - thresholds, gates, ratio cutoffs
+
+  I would not brute force all combinations equally. I would use:
+
+  - hand-designed templates
+  - random search over parameters
+  - then beam search / greedy forward selection over feature families
+
+  That usually gives better signal per compute than full exhaustive search.
+
+  Fifth, add a second-stage meta-clustering over clusters themselves. This matches your observation
+  that:
+
+  - uptrend(8,strong)
+  - uptrend(5,medium)
+  - uptrend(6,weak)
+
+  may belong to a higher-level family.
+
+  So the pipeline should become:
+
+  1. low-level block clustering
+  2. summarize each cluster by prototype statistics
+  3. cluster the clusters
+  4. derive higher-level symbols like:
+
+  - uptrend_strong
+  - uptrend_medium
+  - random_range
+  - reversal_bull_to_bear
+
+  This is much better than trying to force one distance function to solve both low-level and high-level
+  abstraction at once.
+
+  My recommendation:
+
+  - do not start with full brute force of all feature combinations
+  - first build a feature library and an evaluation framework
+  - then search over interpretable distance templates
+  - finally add cluster-of-clusters compression
+
+  If you want the most practical next step, I would implement this:
+
+  1. A distance_experiment module
+
+  - declares feature families
+  - declares distance templates
+  - runs clustering over a grid of parameter settings
+
+  2. An evaluation report
+     For each distance:
+
+  - cluster count
+  - average cluster size
+  - permutation stability
+  - next-return separation
+  - next-volatility separation
+  - cluster redundancy score
+
+  3. A second-stage cluster-merging report
+
+  - prototype each cluster
+  - group similar clusters into macro-patterns
+
+  That will give you a principled way to discover the most representative distance function instead of
+  guessing.
+
+  If you want, I can implement the first version of that experiment framework in the trainer next.
+
+-------------------------------------
+
+ Yes, definitely possible. In your problem, variable-length character blocks are not only possible,
+  they may be the more natural model.
+
+  Fixed q is convenient because:
+
+  - distance is simpler
+  - GPU kernels are simpler
+  - clustering is easier to reason about
+
+  But market structure is not naturally fixed-length. A trend may take 5 candles, 8 candles, or 13
+  candles. So fixed q often splits one semantic pattern across several cluster families, which is
+  exactly what you observed.
+
+  There are three main ways to do variable length.
+
+  1. Multi-q ensemble
+  Train separately for several fixed lengths:
+
+  - q = 3, 5, 8, 13, 21
+    Then merge/compare results afterward.
+
+  This is the easiest and safest approach.
+  It already gives you variable-length coverage without rewriting the whole trainer.
+
+  2. Variable-length segmentation with normalized features
+  Build blocks of varying length, then summarize them into length-invariant descriptors:
+
+  - trend direction
+  - total move
+  - average move per candle
+  - total wick/body ratio
+  - run structure
+  - volatility concentration
+  - reversal pressure
+    Then cluster those summaries.
+
+  This is the cleanest statistical approach, but it moves you from raw block distance to representation
+  learning / summary-feature clustering.
+
+  3. Sequence distance
+  Allow blocks of different lengths and compare them with sequence alignment style distances:
+
+  - DTW
+  - edit-distance-like matching
+  - subsequence alignment
+  - elastic matching
+
+  This is the most expressive, but also the most expensive and hardest to stabilize on GPU.
+
+  For your system, I would recommend this progression:
+
+  1. Start with multi-q fixed blocks
+
+  - because your current code already supports q
+  - and it will immediately tell you whether variable scale helps
+
+  2. Add second-stage compression across q
+
+  - if uptrend(5) and uptrend(8) are similar, merge them into one macro-pattern family
+
+  3. Only after that, consider true variable-length blocks
+
+  So my answer is:
+
+  - yes, variable-length blocks are possible
+  - but I would not jump directly to arbitrary-length raw block clustering
+  - I would first do multi-q plus meta-clustering of clusters
+
+  That will get you most of the benefit with much less algorithmic risk.
+
+  If you want, I can sketch the exact architecture for supporting:
+
+  - multi-q training
+  - cluster-of-clusters merging
+  - later migration to true variable-length blocks
+

@@ -1,0 +1,7 @@
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/trainer_core.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/hip_obj.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/trainer_daemon.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/test_core.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/test.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/edit_cache.dir
+/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/CMakeFiles/rebuild_cache.dir

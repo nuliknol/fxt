@@ -1,0 +1,103 @@
+› The fit_error is currently a metric on deviation from 'range' wave and 'trend' wave. Correct?
+  If so, how is the ideal 'trend' and ideal 'trend' are defined? (specifically)
+
+
+• Yes.
+
+  For relative_waves, relative_waves_2_stage, and relative_waves_seeded, fit_error is the error of the
+  winning class between:
+
+  - trend
+  - range
+
+  So for each token:
+
+  - compute trend_error
+  - compute range_error
+  - choose the smaller one
+  - fit_error = min(trend_error, range_error)
+
+  How the ideal trend is defined
+  It is not one exact prototype candle sequence. It is defined by low penalty on these properties:
+
+  - high relative_directional_efficiency_step
+  - high relative_directional_efficiency_body
+  - low relative_retracement_ratio
+  - high relative_avg_body_efficiency
+  - low relative_overlap_ratio
+  - low sign_change_density
+  - favorable relative_wick_bias_aligned
+  - low continuous relative_trend_quality_raw
+
+  In trainer/src/wave_dp.c, relative_trend_error is built from:
+
+  - relative_strong_trend_error
+  - relative_weak_trend_error
+
+  and then:
+
+  relative_trend_error = min(strong, weak) + move_penalty
+
+  So the ideal trend is basically:
+
+  - strong directional progress
+  - low internal back-and-forth
+  - low pullback
+  - low body overlap
+  - limited sign flips
+  - reasonable wick behavior
+  - enough absolute move
+
+  In plain language:
+
+  - clean move
+  - mostly one direction
+  - shallow retracement
+  - little congestion
+
+  How the ideal range is defined
+  range_error is low when the token looks more sideways/choppy:
+
+  - low relative_directional_efficiency_step
+  - lower directional body efficiency
+  - enough overlap
+  - enough sign changes
+  - enough retracement
+  - not too much net directional progress
+
+  In trainer/src/wave_dp.c, relative_range_error is low when:
+
+  - DER_step is below relative_range_der_step_max
+  - avg_body_efficiency is below relative_range_body_eff_max
+  - overlap is at least relative_range_overlap_min
+  - sign_change_density is at least relative_range_sign_flip_min
+  - retracement is not too low
+  - net move is not too large after normalization
+
+  So the ideal range is:
+
+  - overlapping candles
+  - internal back-and-forth
+  - less efficient directional move
+  - more chop than displacement
+
+  Short version
+
+  Ideal trend:
+
+  - high displacement efficiency
+  - low retracement
+  - low overlap
+  - low chop
+  - enough move
+
+  Ideal range:
+
+  - low displacement efficiency
+  - higher overlap
+  - more sign changes
+  - more internal chop
+  - less clean net progress
+
+  So yes, fit_error is the deviation from those two class ideals, and whichever ideal the token is
+  closer to becomes its class.

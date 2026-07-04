@@ -1,0 +1,3 @@
+core_tests 9 0
+---
+core_tests

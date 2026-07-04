@@ -1,0 +1,5 @@
+{
+	"bind_ip": "0.0.0.0",
+	"port": 80,
+	"storage_root": "trainer_data"
+}

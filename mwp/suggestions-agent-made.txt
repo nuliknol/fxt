@@ -1,0 +1,115 @@
+
+• Yes. Given your objective, I’d focus less on “entry prediction” and more on state-aware exit control.
+
+  What you already have is useful:
+
+  - wave segmentation gives you a compressed market history
+  - seeded trends give you a notion of trend quality and trend exhaustion
+  - seed_pass, fit_error, retracement, overlap, wick burden, and quality bucket are good state features
+    for an exit model
+
+  My main suggestions:
+
+  1. Use the predictor to estimate P(trend_continues) and P(trend_ends soon), not just the next class.
+     For a grid bot, that is the right target. You care more about:
+
+  - “keep pyramiding”
+  - “stop adding”
+  - “close all”
+    than about exact next-wave label.
+
+  2. Add explicit transition features, not only current-wave features.
+     The most useful signal is often the gradient:
+
+  - current trend quality vs previous trend quality
+  - seed pass 1 -> 2
+  - strong trend followed by weaker trend
+  - retracement rising across the last 2-3 trend waves
+  - overlap and wick burden increasing while amplitude falls
+
+  That is exactly the kind of sequence HMMs are good at modeling. Hierarchical HMMs are also used for m
+  ulti-scale bullish/bearish regime structure, because plain HMMs can confuse short noise with larger r
+  egime shifts Oelschläger & Adam, 2020 (https://arxiv.org/abs/2007.14874). HMMs have also been used to
+  detect hidden directional trading sequences from transaction streams Vaglica et al., 2010
+  (https://arxiv.org/abs/1003.2981).
+
+  3. Add a “do nothing / hold” state to the exit logic.
+     For your bot, the decision space should probably be:
+
+  - hold and keep grid active
+  - hold but stop adding
+  - close basket
+
+  That is better than forcing every state into hold/close. Many bad closes will come from acting too
+  early, not too late.
+
+  4. Make the exit model asymmetric.
+     Your downside is not symmetric:
+
+  - missing a small early close is often tolerable
+  - closing a strong trend too early is expensive
+  - closing too late in a reversal can also be expensive
+
+  So train/tune the decision threshold around realized basket PnL, not just label accuracy.
+
+  5. Add basket-aware features.
+     Wave-only features are not enough for a grid system. The exit model should also see:
+
+  - current basket size
+  - average entry distance from price
+  - floating drawdown
+  - distance to worst entry
+  - time since last add
+  - number of stacked positions
+  - realized/unrealized convexity of the basket
+
+  Because the same wave state can imply different exit decisions depending on inventory.
+
+  6. Add a higher-timeframe regime input.
+     Your 5M waves are useful, but exits improve if the model also knows:
+
+  - 30M or 1H trend state
+  - whether 5M trend is aligned with higher timeframe
+  - whether current 5M weakening is just local pullback inside a stronger higher-timeframe trend
+
+  That is close to the multi-scale idea behind hierarchical regime models Oelschläger & Adam, 2020
+  (https://arxiv.org/abs/2007.14874).
+
+  7. Track “trend exhaustion” explicitly.
+     I would add a derived feature like:
+
+  - exhaustion_score = rising wicks + rising overlap + falling amplitude + falling DER + increasing
+    retracement
+    over the last few trend waves
+
+  That may be more actionable for exits than raw class labels.
+
+  8. Backtest causally only.
+     Since your segmentation is prefix-causal now, the backtest must also run prefix by prefix. Do not
+     train or evaluate exits on full-dataset finalized segmentation, or you’ll overstate performance.
+
+  Model choice:
+
+  - If you want interpretability and state persistence: HMM / hierarchical HMM is a good first choice.
+  - If you want raw predictive power later: gradient-boosted trees on wave-sequence features may
+    outperform a plain HMM.
+  - A strong practical setup is:
+      - HMM for latent regime state
+      - simple supervised exit policy on top of HMM state + wave features + basket features
+
+  If I had to prioritize one improvement now, it would be:
+
+  - build a causal feature set from the last 3-5 waves
+  - include basket state
+  - predict close_all vs hold/stop_add
+  - not just next wave class
+
+  Sources:
+
+  - Oelschläger & Adam, “Detecting bearish and bullish markets in financial time series using hierarchi
+    cal hidden Markov models” (2020): https://arxiv.org/abs/2007.14874
+  - Vaglica et al., “Statistical identification with hidden Markov models of large order splitting stra
+    tegies in an equity market” (2010): https://arxiv.org/abs/1003.2981
+
+  If you want, I can help design the exact feature vector for the exit model from the wave data you
+  already generate.

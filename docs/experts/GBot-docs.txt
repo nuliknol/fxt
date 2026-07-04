@@ -1,0 +1,153 @@
+  Usually will affect results
+
+  - GridStepPips: changes grid spacing directly via GridStepPrice() in
+    GBot.mq4:122
+  - TradeDirection: BUY-only vs SELL-only
+  - LotSize: changes P/L magnitude and margin usage
+  - MaxOrders: caps the grid
+  - ExtremeWindowBars, WickCapMultiplier, DeviationK, MinWindowRangePips:
+    affect the extreme-deviation logic
+  - UseProfitGiveback, MinPeakProfitPips, MaxProfitGivebackPercent,
+    MinTotalPositiveProfitPips: affect harvest logic
+  - CandlePressureLookback, CandlePressureDecay, CP_W_Body, CP_W_Close,
+    CP_W_Wick: affect candle-pressure scoring
+  - W_ExtremeDeviation, W_ProfitGiveback, W_CandlePressure, HarvestThreshold:
+    affect the final harvest decision
+  - MinOrderProfitPips, CloseSafetyPips: affect whether orders count as
+    harvestable
+  - SpreadSampleTicks, MaxSpreadPips, MaxAverageSpreadPips,
+    MaxSpreadJumpPips: these matter because the EA checks spread stability
+    before execution in GBot.mq4:317 and GBot.mq4:337
+
+  Primary perceptron-like weights
+
+  - W_ExtremeDeviation in GBot.mq4:12
+      - Role: weight on g_last_extreme_score
+      - Code-level bounds: no explicit min/max validation
+      - Effective type range: signed int
+  - W_ProfitGiveback in GBot.mq4:13
+      - Role: weight on g_last_giveback_score
+      - Code-level bounds: none
+      - Effective type range: signed int
+  - W_CandlePressure in GBot.mq4:14
+      - Role: weight on g_last_pressure_score
+      - Code-level bounds: none
+      - Effective type range: signed int
+
+  Secondary perceptron-like weights inside candle pressure
+
+  - CP_W_Body in GBot.mq4:30
+      - Role: weight on adverse candle body
+      - Code-level bounds: none
+      - Effective type range: signed int
+  - CP_W_Close in GBot.mq4:31
+      - Role: weight on adverse close position
+      - Code-level bounds: none
+      - Effective type range: signed int
+  - CP_W_Wick in GBot.mq4:32
+      - Role: weight on adverse wick
+      - Code-level bounds: none
+      - Effective type range: signed int
+
+
+  Weight-like coefficients and thresholds
+
+  - CandlePressureDecay in GBot.mq4:29
+      - Role: decays weight of older candles
+      - Code-level bounds: none
+      - Type: double
+  - DeviationK in GBot.mq4:20
+      - Role: multiplies standard deviation in the extreme-deviation baseline
+      - Code-level bounds: none
+      - Type: double
+  - WickCapMultiplier in GBot.mq4:19
+      - Role: scales wick clipping before building the extreme window
+      - Code-level bounds: none
+      - Type: double
+  - HarvestThreshold in GBot.mq4:15
+      - Role: final decision threshold
+      - Code-level bounds: none
+      - Type: double
+  - ScoreClampMax in GBot.mq4:16
+      - Role: caps each subscore in ClampScore()
+      - Code-level bounds: none
+      - Type: double
+
+  Notable related tunables, but not weights
+
+  - ExtremeWindowBars >= 10 is enforced in GBot.mq4:714
+  - MaxProfitGivebackPercent > 0 is required if UseProfitGiveback=true in
+    GBot.mq4:720
+
+  For optimization, yes, the built-in Strategy Tester is the obvious tool.
+  But do not let it search arbitrary negative or huge values just because the
+  code allows them. This code has almost no sanity bounds, so unconstrained
+  optimization can produce nonsense and severe overfitting.
+
+  Practical search ranges I would start with:
+
+  - W_ExtremeDeviation, W_ProfitGiveback, W_CandlePressure: 0..10
+  - CP_W_Body, CP_W_Close, CP_W_Wick: 0..10
+  - CandlePressureDecay: 0.3..0.95
+  - DeviationK: 0.0..3.0
+  - WickCapMultiplier: 0.5..5.0
+  - HarvestThreshold: 1.0..15.0
+  - ScoreClampMax: 1.0..20.0
+
+
+
+• Use these as a practical exhaustive-search grid for this EA on MT4. I’m
+  keeping steps coarse enough that the search remains finite, but fine enough
+  to be useful.
+
+  Suggested Grid
+
+  - W_ExtremeDeviation: start=0, step=1, stop=10
+  - W_ProfitGiveback: start=0, step=1, stop=10
+  - W_CandlePressure: start=0, step=1, stop=10
+  - CP_W_Body: start=0, step=1, stop=10
+  - CP_W_Close: start=0, step=1, stop=10
+  - CP_W_Wick: start=0, step=1, stop=10
+  - CandlePressureDecay: start=0.30, step=0.05, stop=0.95
+  - DeviationK: start=0.00, step=0.25, stop=3.00
+  - WickCapMultiplier: start=0.50, step=0.25, stop=5.00
+  - HarvestThreshold: start=1.00, step=0.50, stop=15.00
+  - ScoreClampMax: start=1.00, step=1.00, stop=20.00
+
+  Important
+  If you run all of these exhaustively together, the combinations explode:
+
+  - 11^6 * 14 * 13 * 19 * 29 * 20
+  - roughly 17.5 trillion combinations
+
+  That is not practical in MT4 Strategy Tester.
+
+  What to do instead
+  Use staged exhaustive search:
+
+  1. Fix CP_W_*, optimize only:
+      - W_ExtremeDeviation
+      - W_ProfitGiveback
+      - W_CandlePressure
+      - HarvestThreshold
+  2. Then fix those and optimize:
+      - CP_W_Body
+      - CP_W_Close
+      - CP_W_Wick
+      - CandlePressureDecay
+  3. Then optimize:
+      - DeviationK
+      - WickCapMultiplier
+      - ScoreClampMax
+
+  A leaner first pass would be:
+
+  - W_*: step 2 instead of 1
+  - CP_W_*: step 2
+  - CandlePressureDecay: step 0.10
+  - DeviationK: step 0.50
+  - WickCapMultiplier: step 0.50
+  - HarvestThreshold: step 1.00
+  - ScoreClampMax: step 2.00
+
+

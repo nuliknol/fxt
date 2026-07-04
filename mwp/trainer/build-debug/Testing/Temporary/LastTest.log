@@ -1,0 +1,19 @@
+Start testing: Mar 24 17:48 CST
+----------------------------------------------------------
+1/1 Testing: core_tests
+1/1 Test: core_tests
+Command: "/home/mf/mf/bitforce/mt/mwp/trainer/build-debug/test_core"
+Directory: /home/mf/mf/bitforce/mt/mwp/trainer/build-debug
+"core_tests" start time: Mar 24 17:48 CST
+Output:
+----------------------------------------------------------
+test_core: /home/mf/mf/bitforce/mt/mwp/trainer/tests/test_core.c:353: test_primitive_wave_splits_breakout_tail: Assertion `tokens[0].class_id == PRIMITIVE_CLASS_ALTERNATING' failed.
+<end of output>
+Test time =   0.28 sec
+----------------------------------------------------------
+Test Failed.
+"core_tests" end time: Mar 24 17:48 CST
+"core_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Mar 24 17:48 CST

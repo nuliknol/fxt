@@ -1,0 +1,18 @@
+
+Fetch list of clusters:
+	curl -s "http://127.0.0.1:8080/datasets/1/clusters"
+
+
+Cheat-sheet:
+	q		how many candlesticks make a character
+	theta	threshold in clustering distance:
+				Two blocks are connected if distance(block_i, block_j) <= theta.
+	delta	per-feature tolerance in distance matching.
+
+  Distance (where weights apply):
+  - Each candle in a block is encoded into 4 features: upper wick, lower wick, body, range.
+  - Block distance sums feature mismatches across the q candles.
+  - If weighted=0: all 4 parts contribute equally.
+  - If weighted=1: contributions are scaled by:
+      - w_upper, w_lower, w_body, w_range
+

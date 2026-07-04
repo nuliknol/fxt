@@ -1,0 +1,1 @@
+/usr/bin/cc -g CMakeFiles/test_core.dir/tests/test_core.c.o -o test_core  -Wl,-rpath,/opt/rocm/lib libtrainer_core.a /opt/rocm/lib/libamdhip64.so /lib/x86_64-linux-gnu/libstdc++.so.6 
