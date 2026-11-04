@@ -1,0 +1,365 @@
+Scrubber.mq4 — pending grid and independent position profit trailing
+==========================================================
+
+Installation
+------------
+Copy experts/Scrubber.mq4 to MQL4/Experts/Scrubber.mq4 and copy
+experts/scrubber/profit_math.mqh to MQL4/Experts/scrubber/profit_math.mqh.
+Compile Scrubber.mq4 in a current MT4 MetaEditor. The C++ regression harness
+does not produce an EX4 file and is not a substitute for MetaEditor compilation.
+Attach to the broker's actual symbol, with a distinct nonzero MagicNumber.
+One live chart per account/server/symbol/magic is enforced in this terminal.
+Separate terminal installations cannot coordinate their locks: do not run the
+same symbol/magic in two terminals connected to the same account.
+
+Business rules
+--------------
+TradeDirection is LONG_ONLY or SHORT_ONLY. LONG uses BUY STOP above Ask and
+BUY LIMIT below Ask; SHORT uses SELL STOP below Bid and SELL LIMIT above Bid.
+Both sides build inventory in the selected direction, including during adverse
+price movement. The EA never sends a market entry or opens the opposite trade
+direction. LotSizeFX, LotSizeNAS100 and LotSizeGold all
+default to 0.01 lots. The applicable input is selected once at initialization:
+currency pairs use LotSizeFX, US100/NAS/USTEC aliases use LotSizeNAS100, and
+XAU/GOLD aliases use LotSizeGold (including broker suffixes). The selected lot
+size stays fixed; invalid lot increments are rejected at initialization instead
+of silently rounding or scaling lots. The initialization log identifies which
+input was selected. Other CFDs/metals are rejected rather than using FX lots.
+Existing .set presets containing the old LotSize key must be updated to these
+new input names; the old key is no longer used.
+Grid levels are absolute price multiples of GridStepPips * pip size, anchored
+at price zero. PendingGridLevels (default 3) applies to EACH side of the entry
+quote for NEW placement: initially up to six pending orders. Levels already
+occupied by an open position or pending order are not duplicated, even if
+that level now lies on the other side of price. Placement alternates the
+nearest trend and counter-trend levels before moving farther out, subject to
+MaxOrders and broker distance restrictions.
+
+PendingRetentionExtraLevels (default 3) adds a retention buffer for existing
+pending orders. Routine distance cleanup deletes a pending order only when its
+price is MORE than (PendingGridLevels + PendingRetentionExtraLevels) grid
+intervals from the current entry quote (Ask for buys, Bid for sells). With
+3 placement levels plus 3 extra retention levels and a 10-point grid, orders
+are placed within the nearest 3 levels but retained until over 60 price points
+away. Returning across a boundary reuses existing tickets instead of deleting
+and recreating them. A quote touching/crossing a pending level also does not
+cause cancellation/retyping while broker activation may still be in progress.
+There can consequently be MORE than six pending orders, all still counted
+against MaxOrders. Increasing the retention buffer preserves more pending
+exposure; setting it to zero removes the extra buffer. This is a distance rule,
+not a time delay or a promise that price cannot return to an old level.
+
+Spread blocks, Friday cleanup, changed settings/expiration, duplicate
+levels and wrong-direction orders can still cause earlier cancellation.
+PENDING_DELETED logs identify the reason; routine distance deletions log both
+the measured distance and the retention limit. New orders replace deleted ones
+only after stale deletions succeed. Filled orders retain their grid ID
+even when execution slips. Broker minimum-distance constraints can leave fewer
+than N pending orders per side; levels are never moved off the grid to satisfy them.
+MaxOrders counts this EA's market and pending orders together (default 200).
+
+Each position has independent state keyed by its broker ticket. On every tick:
+  net_i = OrderProfit + OrderSwap + OrderCommission - closing_commission_reserve
+  pip_value_i = MODE_TICKVALUE * lots_i * pip_size / tick_size
+  activate once net_i > 0 AND net_i / pip_value_i >= position_minimum_profit_floor
+  once activated: peak_i = max(previous_peak_i, net_i)
+  exit_threshold_i = peak_i * (1 - MaximumProfitDrawdownPercent / 100)
+
+position_minimum_profit_floor is now an ACTIVATION threshold, not a minimum exit
+profit. Its default remains 0 (activate on any positive net); set 5 to require
+five net pips before trailing starts. Activation is permanent for the lifetime
+of that ticket. A position activated at five net pips with 20% giveback can close
+at four net pips. Returning below five does not remove profit from tracking or
+reset the peak. The full net profit is tracked, not only the amount above five.
+Pip units use the same instrument resolution as GridStepPips/PipSizeOverride.
+The percentage is shared by all tickets; each ticket has its OWN peak and stop.
+With proportional costs and unchanged execution constraints, scaling volume
+scales cash values but does not change activation/stop prices.
+
+When one position reaches its own drawdown threshold, only that ticket is
+marked for closing. Failed requests retry after two server seconds, even if
+profit recovers. A due position with net <= 0 is retained until net-positive;
+its activation and peak are not reset. Other positions keep their own state,
+and the grid continues normally while one ticket waits for a retry. Pending
+orders retain their tickets through exits, except for independent spread,
+session, settings, duplication and distance cleanup rules. Freed grid levels
+may be replenished on the same tick. There are no candles or bar timers.
+An unarmed losing position can later recover, reach activation, and start its
+own trailing cycle. Manual/other-magic/other-symbol positions are excluded.
+
+Proactive profit protection
+--------------------------
+For each activated position, the EA independently solves:
+  projected_net_i(stop_price_i) = exit_threshold_i
+The closed-form calculation includes booked commission, current swap and the
+closing reserve. There is no basket sum, eligibility discontinuity, common stop
+or cascade from one position's realization to another. Buy positions use Bid;
+sell positions use Ask. Stops round inward to the broker price tick and ratchet
+only toward greater protection. A new request is sent only when the rounded
+stop improves by at least a tick. Failed stop requests back off for two seconds;
+that delay does not block the ticket's market-close fallback or other positions.
+If broker minimum/freeze distance prevents placement, the per-tick cash trigger
+continues to protect that position. Existing tighter accepted stops remain;
+changing settings/fees or conversion rates can make them tighter than a newly
+calculated target. The EA never widens an established independent stop.
+
+No pip-floor check is applied to an already activated position's exit. Stops
+are allowed below the activation amount while still targeting positive net
+profit. Broker execution can occur before the EA processes the next tick and
+can gap below breakeven; such a fill is logged and removes ONLY that ticket's
+state. No other position is automatically closed because of it.
+
+Current OrderProfit is broker-valued. Projection refreshes MODE_TICKVALUE and
+uses SYMBOL_TRADE_TICK_SIZE in price units. It adjusts projected conversion for
+FX base currency equal to deposit currency (e.g. USDCHF/USDMXN on a USD account).
+Other conversion rates are frozen at the snapshot rate. Currency conversion,
+spread, future swap/commission and execution gaps can change before a stop fills.
+The target percentage is not a guaranteed realized amount. Already activated
+positions can still use their cash drawdown trigger if tick-value metadata is
+missing; new entries and nonzero-pip activation wait for valid valuation.
+
+Commission and rollover
+-----------------------
+Booked commission is included as reported by MT4. Negative swap subtracts
+from profit and positive swap adds to it. ExitCommissionPerLot controls the
+additional closing-cost reserve in deposit currency:
+  -1 (default): reserve abs(negative commission already booked on the order).
+   0: no extra reserve, for brokers booking the complete round-turn upfront.
+  >0: reserve this many deposit-currency units per lot for the closing side.
+MT4 does not expose a universal future commission schedule. Automatic mirroring
+is an estimate and can over-reserve a prepaid round-turn or under-reserve a
+price-dependent closing charge. Verify the chosen mode against account history.
+If the tester does not book commission, supply a suitable explicit reserve or
+use a testing environment that models the actual account charges. The reserve
+affects EA decisions; it cannot change MT4's reported TesterStatistics profit.
+
+Pips and symbols
+----------------
+Auto conventions:
+  Forex: 0.0001 for five-digit/non-JPY pairs; 0.01 for three-digit JPY pairs.
+  RoboForex XAU/GOLD: 0.01 price units per pip.
+  US100/NAS/USTEC names (including suffixes): 1.0 index point per pip.
+PipSizeOverride changes the pip definition for supported instruments; it does
+not assign a lot-size category to an unsupported CFD. All grid distances must be exact
+multiples of the broker's tick size. Initialization logs the resolved pip,
+grid distance, tick size, fixed lot size, account currency and Friday cutoff.
+For example, GridStepPips=20 means $0.20 on gold under the 0.01 convention,
+20 index points on US100, and 0.0020 on USDCHF/USDMXN. Choose symbol-specific
+settings; a single grid/spread preset does not have the same meaning everywhere.
+Do not change grid units/size with existing positions; grid IDs use the original
+spacing. Weekly optimization of the drawdown percentage does not change grid IDs.
+
+Contract-value examples (USD account, before commission and swap):
+Nasdaq tick size 0.1 and tick value $0.1 per lot means $1 per price point per lot.
+A move from 28500 to 28400 loses $100 for a 1-lot long or gains $100 for a 1-lot
+short. At the default 0.01 lots, these become -$1 and +$1 respectively.
+Gold tick size 0.01 and tick value $1 per lot means $100 per price point per lot.
+A move from 4042 to 3942 loses $10,000 for a 1-lot long or gains $10,000 for a
+1-lot short. At 0.01 lots, these become -$100 and +$100 respectively.
+The EA reads the actual broker tick value/size; these contract values are test
+examples, not hardcoded assumptions. Pip size controls grid/spread distances,
+not contract value. Tests verify both directions, both lot sizes, and the cash
+floor/SL implied by a 15% retracement of those gains.
+
+Spread, slippage, failures
+-------------------------
+Harvester's UseSpreadFilter/MaxSpreadPips and optional rolling spread-jump
+filter are retained. The jump filter compares max-min spread over the most
+recent SpreadSampleTicks real ticks and waits for a full sample window.
+Timers never add spread samples. Wide/unstable spread blocks NEW entries and
+attempts deletion of existing pending orders, with explicit ENTRY_BLOCK logs.
+Unlike Harvester, spread never blocks individual profit exits or protective SL updates.
+SlippagePips is converted to MT4 points for market-close requests and retained
+in pending OrderSend calls. MT4 slippage is not a maximum gap/slippage guarantee
+for pending activation, SL execution, or broker market-execution policies.
+
+Pending activation happens at the server before the EA sees the next tick.
+No client EA can guarantee that a spread spike never activates an already
+placed pending order. Likewise, pending orders cannot be canceled while offline,
+inside some broker freeze zones, or after the server has already executed them.
+The EA logs errors, retries safe actions on subsequent events, and blocks
+replacement exposure when stale pending deletion fails. It never falls back
+to unexpiring pending orders if the broker rejects expiration (error 147).
+An ambiguous send timeout (128) disables new entries and attempts cancellation
+of visible pending exposure instead of blindly resending. This latch survives
+restart. After reconciling the actual broker order list, remove the EA, set its
+Scrub.<server hash>.<account>.<symbol>.<magic>.uncertain terminal global variable
+to 0, and reattach it. Other transient entry errors use a two-second backoff.
+Profit exits and protection continue while new entries are blocked.
+
+Friday, holidays and sessions
+----------------------------
+FridayCloseMinutesServer=-1 reads the latest end of the symbol's Friday trading
+sessions through SymbolInfoSessionTrade. Midnight and overnight end times are
+handled. The pending-order expiration is set to that week's close minus
+MinutesBeforeFridayClose (default 20). A one-second timer additionally deletes
+pending orders at cutoff, even without a tick on this chart, using server time
+extrapolated from the last tick. Existing market positions remain open.
+The frontier remains disabled after cutoff and throughout Saturday/Sunday;
+it resumes on Monday. An overnight Friday session can therefore be cut off at
+Saturday midnight earlier than its computed expiration, deliberately avoiding
+new weekend exposure. Broker session changes are reread and expiration updated.
+
+MT4 Strategy Tester does not dispatch Timer events. In a backtest the EA skips
+timer registration and runs the same cleanup checks on every simulated tick,
+using historical server time. The initialization log reports TESTER_MODE.
+There is no simulated cleanup callback between ticks; pending expiration is
+still sent to the tester. Live operation retains the one-second cleanup timer,
+and a live timer-registration failure aborts initialization with its error code.
+
+If MT4/the tester provides no Friday session data, entries remain blocked.
+Set FridayCloseMinutesServer explicitly using the actual SYMBOL specification:
+  1395 = 23:15, giving a 22:55 cutoff with a 20-minute buffer;
+  1435 = 23:55, giving a 23:35 cutoff;
+  1440 = midnight at the end of Friday.
+These are examples, not an assumed schedule for your account. Up to 2880 is
+accepted for an overnight Friday close. Use SpecialCloseServerTime for a known
+holiday/early close; it supersedes the weekly cutoff if earlier and keeps
+entries off for the rest of that server calendar day. It is not a holiday feed.
+Weekly session metadata may not encode future holidays or historical sessions.
+Use date-appropriate manual settings for backtests and special closures.
+
+RoboForex documents EET server time (UTC+2 winter, UTC+3 summer), not fixed
+Moscow time. Nasdaq's announced December 2026 23/5 stock-exchange schedule is
+not automatically a schedule change for the broker's US100 CFD. The EA follows
+the broker symbol metadata rather than hardcoding either assumption.
+
+State and ownership
+-------------------
+Only matching symbol and nonzero magic orders are managed. Manual orders
+(magic 0) and other EAs are excluded. If opposite-direction own positions
+exist, the EA refuses new entries; restore their original direction to manage
+them rather than using a setting change to hedge them.
+Each ticket's activation, peak-per-lot and pending close flag are saved in
+terminal global variables, scoped to broker/account/symbol/magic. One signed
+value per ticket stores the state atomically; a negative value means close due.
+Same-ticket partial volume reduction scales that ticket's cash peak. A broker
+that replaces a ticket on partial closure creates a new tracked position: the
+EA cannot infer its historical peak. Tester passes never read/write live state.
+Completed tickets are removed from tracking without affecting other tickets.
+Terminal global variables survive normal EA/terminal restarts; an abrupt crash
+can lose updates not yet flushed by the terminal. Deinitialization flushes them.
+
+Version 2 does NOT import legacy basket peaks or harvest flags. An open EA-owned
+position without version-2 ticket state starts from current observations. Any
+existing stop on that position is treated as legacy protection: it is removed
+when broker/trading constraints permit, before installing an independent stop.
+Failed removal is logged and retried; the old stop can still execute first.
+A missing historical per-position peak cannot be reconstructed on upgrade.
+Normal version-2 restarts preserve accepted stops, activation and peak, including
+when current profit is below the activation threshold or that input changes.
+The current drawdown percentage applies on resume; accepted stops never loosen.
+Removing the EA attempts to delete pending orders but leaves market positions
+and their accepted broker stops in place.
+
+Debugging and weekly optimization
+--------------------------------
+Logs report trading operations/results, failures, position activation/restoration, exits, and entry
+block/resume transitions. Unchanged blocks are not repeated, even when their
+numeric details change. Ticks, new peaks, proposed stops, and hold/skip decisions
+do not print messages. Profit and peak tracking still run on every tick.
+Position events include ticket, current net, that ticket's peak and exit floor.
+EnableDebugPrints=true additionally includes bid/ask, spread and activation pips.
+With debug off the same events log without the extra market context. Initialization and tester results also log. MT4's own trade journal
+messages are generated by the terminal independently of this setting.
+
+Candle replay and validation
+----------------------------
+Run from the repository root:
+  python3 tests/scrubber/replay_candles.py /tmp/AUDUSD1-10k-candles.csv
+The default interval is 2026-10-22 inclusive through 2026-11-03 exclusive,
+including all of November 2. Override --start and --end-exclusive as needed.
+The report is /tmp/scrubber-replay.json (override with --output).
+
+This compiles the actual EA against a simulated broker and replays four
+invented Bid paths: O-H-L-C and O-L-H-C, each as four quotes per minute or
+one-point interpolation within each leg. It does not interpolate gaps between
+minutes, reproduce MT4's tick generator, or recover the unknown real tick path.
+Identical OHLC can contain additional oscillations absent from all four paths.
+The results are sensitivity scenarios, NOT profit forecasts, confidence ranges,
+upper/lower bounds, or a reference for a +/-5% correctness test.
+
+Defaults match the logged short AUDUSD grid: .01 lot, 4-pip grid, 3 levels each
+side, 3 extra retention levels, 15% giveback, 200-order cap, 2-point spread.
+Use --position-minimum-profit-floor 5 to include the new per-position net-pip
+activation threshold in the replay; its default is 0. Version-2 exits are
+independent even when this input is 0, so results differ from the basket EA.
+Friday cleanup is assumed at 23:35 server time. The simulated broker assumes
+100,000 units/lot and USD account currency. Pending stops and protective stops
+fill at the first available quote; limits fill at their requested price.
+Market closes execute immediately, with no additional slippage or rejection.
+
+Commission defaults are explicit hypotheses inferred from the supplied sample,
+not verified live broker terms: $1/lot booked, $0/lot actual closing charge,
+$1/lot estimated closing reserve. Set --booked-commission-per-lot,
+--closing-commission-per-lot and --reserve-per-lot from the actual report.
+--spread-points and --stop-points control constant modeled broker constraints.
+Swap, cash rounding, variable spread/fees, margin constraints, changing sessions
+and latency are omitted. Both realized profit and remaining inventory net of
+booked/actual estimated exit charges are reported; no forced end-of-run close
+is sent to the EA. The total is a hypothetical immediate liquidation value.
+Replaying the same EA is not independent proof of its trading logic: the
+separate native regression suite checks known mathematical outcomes and gaps.
+Regression cases include permanent activation, below-activation exits, no
+threshold-disappearance drawdown, no stop-realization cascade, per-ticket
+restart/retry state, legacy-stop migration and manual-order isolation.
+
+Verification commands:
+  python3 tests/scrubber/run_tests.py
+  python3 -m unittest discover -s tests/scrubber -p 'test_replay*.py'
+Lot-scale regression checks cover both directions and .01/.1/1/10 lots,
+including proportional costs. Gap cases cover fallback closure while winners
+remain, retaining losers when no broker stop exists, and reconciling a broker
+stop that executes beyond breakeven. A server stop cannot promise a positive
+fill when the market jumps past its profitable stop price.
+
+Action logs alone cannot prove that no ticks or profit peaks were missed. An
+exact independent reconciliation needs the SAME Bid/Ask event sequence and
+ordering as the tester, all input/symbol settings, per-order profit/commission/
+swap and stop snapshots, trade requests/results, and final account inventory.
+Stop/freeze distances, requested versus actual fill prices, and the previous
+quote/peak/floor are needed to distinguish math errors from quote gaps, price
+rounding, broker constraints, and execution delays. Such a trace should be an
+optional separate audit file, not restored per-tick terminal Print messages.
+The current EA does not yet export that full trace. Aggregate profits within
+5% would not prove correctness: offsetting accounting or execution bugs can
+hide inside the same total. With identical inputs, compare decisions and cash
+flows event by event, using tick-size and currency-rounding tolerances.
+
+The Harvester OnTester fitness is retained:
+  profit + TesterTradeBonus * closed_trades - TesterDrawdownPenalty * equity_DD
+Passes below TesterMinProfit/TesterMinTrades or above the optional money/percent
+equity drawdown limits receive -1e9. TesterUseCustomScore=false returns profit.
+These are tester filters, not live loss limits. Defaults were copied exactly,
+including 3,000 minimum trades and 1,000 minimum profit; adjust them for a short
+weekly sample or every pass may be rejected. Select "Custom max" optimization
+and optimize MaximumProfitDrawdownPercent while holding the desired grid/lot
+settings fixed. Use tick modeling; open-price-only tests cannot validate this EA.
+Use realistic spread, commissions, swaps and execution behavior. Built-in
+historical tests may not reproduce news latency, spread spikes, gaps or rejected
+modifications. Keep an out-of-sample period and check behavior on a demo account.
+
+Automated validation
+--------------------
+Run from the repository root:
+  python3 tests/scrubber/run_tests.py
+Requires Python 3 and g++. The runner strips only MQL #property directives,
+compiles the actual EA handlers and the unchanged shared numerical header
+against a deterministic MT4 API shim, and runs AddressSanitizer/UBSan.
+It covers 10,000 randomized per-position stop calculations, 6,000 broker-event stress ticks, and
+focused regression scenarios for profit/fee accounting, manual-order isolation,
+long/short stop-and-limit grids, counter-trend inventory building and subsequent
+independent net-positive exits, pending fills, frontier cleanup, spread guards, failures,
+restart, server-side stops, repeated same-timestamp exits, sessions and fitness.
+It does not emulate the real broker or validate MQL compiler compatibility.
+
+Primary references checked during implementation
+------------------------------------------------
+https://docs.mql4.com/marketinformation/symbolinfosessiontrade
+https://docs.mql4.com/constants/environment_state/marketinfoconstants
+https://docs.mql4.com/trading/ordersend
+https://docs.mql4.com/runtime/testing
+https://roboforex.com/forex-trading/trading/trading-accounts/
+https://roboforex.com/forex-trading/trading/specifications/card/prime-prime-ecn/xauusd/
+https://roboforex.com/forex-trading/trading/specifications/card/pro-stan/US100.p/
+https://www.nasdaq.com/newsroom/nasdaq-explains-what-is-23-5-trading
