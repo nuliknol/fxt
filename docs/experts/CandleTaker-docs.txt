@@ -1,0 +1,212 @@
+CandleTaker.mq4 v2 — minimum candle-run exits with pre-close break-even
+====================================================================
+
+Installation and StrategyTester
+-------------------------------
+Copy both files, preserving the subdirectory:
+  experts/CandleTaker.mq4              -> MQL4/Experts/CandleTaker.mq4
+  experts/candletaker/profit_math.mqh  -> MQL4/Experts/candletaker/profit_math.mqh
+Compile CandleTaker.mq4 in MetaEditor. Scrubber and Harvester are unchanged.
+
+CandleTaker v1 reused scrubber/profit_math.mqh; that was why it had no helper
+folder of its own. V2 has its own numerical helper for cost-inclusive break-even
+protection and the copied grid/floor functions. Directory layout does not enable
+or disable optimization. Both versions have input parameters and OnTester().
+
+The new optimizable input is minimum_candles_in_sequence (correct spelling),
+default 2, allowed range 1..10000. CandleLookbackBars is removed. Mean, standard
+deviation, two-run accumulation and origin-price cancellation are not used or
+computed. The status box now shows the minimum, number of positions meeting
+both activation conditions, last closed candle classification and exit backlog.
+
+Profit-only optimization:
+  Set TesterUseCustomScore=false and select the tester criterion "Custom max".
+  OnTester then returns net profit directly and bypasses custom score filters.
+  Select minimum_candles_in_sequence in the Inputs optimization grid and set
+  its start/step/stop values. Other input parameters remain optimizable too.
+
+With TesterUseCustomScore=true the inherited Harvester score remains:
+  profit + TesterTradeBonus * trades - TesterDrawdownPenalty * equity_drawdown
+Default TesterMinProfit=1000 and TesterMinTrades=3000 reject smaller passes with
+-1e9. Thus a $145 profit pass fails that custom minimum-profit filter even if
+its reported trading profit is positive. Adjust filters for the test interval
+when using the weighted score. These filters do not limit live exposure.
+
+Use tick modeling even though new exit signals depend on completed candles:
+grid fills and permanent net-pip activation still depend on intrabar prices.
+Compare ending equity including remaining inventory and costs, as well as
+closed profit. This implementation change does not establish higher returns.
+
+Execution mechanics retained
+-----------------------------
+Default MagicNumber=779002 distinguishes CandleTaker from Scrubber's 779001.
+Only matching symbol/magic market and pending orders are managed. Manual
+orders (magic 0) are excluded. Use unique magic numbers across strategies.
+The account/server/symbol/magic ownership lock is shared with Scrubber so an
+accidentally reused magic on another active chart is rejected in live use.
+
+The following mechanics are copied: LONG or SHORT only, fixed instrument lots,
+STOP and LIMIT grid placement, pending retention, MaxOrders, spread and jump
+filters, slippage conversion, Friday and special-close cleanup, required pending
+expiration, entry timeout/retry handling, action-only logging and tester score.
+Tests compare 34 execution/accounting function bodies against Scrubber.
+
+LotSizeFX, LotSizeNAS100, LotSizeGold default to 0.01. Pip sizing remains
+conventional FX pips, 1 price unit for known Nasdaq aliases, 0.01 for gold,
+or PipSizeOverride. Fixed grid spacing, doji pips and profit-floor pips therefore
+still influence the strategy; candle-based exits do not make those distances
+adaptive to session volatility. See Scrubber-docs.txt for inherited mechanics.
+
+A profit exit never clears the pending grid. Spread/close-time safety guards
+still delete pending orders as needed. Existing positions are retained over
+Friday cleanup. Spread blocks entries but does not block eligible profit exits.
+
+Candle interpretation
+---------------------
+Use completed broker Bid M1 candles, regardless of the attached chart period.
+Evaluate a newly closed candle on the first available subsequent tick; market
+close requests use the current executable Bid/Ask, not the old candle close.
+Wicks are now used for the two candle filters below, not for price-origin resets.
+
+The comparison candle is always the immediately preceding closed M1 candle,
+even if that preceding candle was itself ignored. No search for the last
+non-ignored candle is performed.
+
+Ignore these candles without increasing OR breaking the favorable sequence:
+  Outside: current HIGH > previous HIGH AND current LOW < previous LOW.
+           Both wick comparisons must be strict; equality does not qualify.
+  Inside: current LOW >= min(previous OPEN, previous CLOSE) AND
+          current HIGH <= max(previous OPEN, previous CLOSE).
+          The entire wick range must fit within the previous BODY, with equality
+          accepted. Merely closing inside the prior body is not sufficient.
+  Doji: absolute current CLOSE - OPEN <= DojiBodyPips * pip_size.
+        DojiBodyPips remains 1.0 by default. Exact equality is ignored.
+
+Classification order for diagnostics is outside, inside, doji, then ordinary
+bullish/bearish. Overlapping ignored classifications have the same effect.
+Ordinary candles favor LONG when CLOSE > OPEN, SHORT when CLOSE < OPEN.
+Only three bars are needed for current readiness: forming bar plus the latest
+two completed bars. No 240-bar window or completed statistical sample is needed.
+Missing/invalid OHLC suspends new entries and removes pending exposure; existing
+accepted market exits can still retry. Incomplete OHLC is never replaced with
+zeros or an invented directional candle.
+
+Independent sequence and profit activation
+------------------------------------------
+Every position tracks its own consecutive favorable-candle count. Counting
+starts while that position is tracked, independently of profit activation.
+Only complete candles whose opening time is at/after the position's actual fill
+count. The partially elapsed candle of an intraminute fill is excluded.
+
+An ordinary favorable candle adds one to that position's count. Reaching
+minimum_candles_in_sequence makes the CURRENT run eligible; it does not close
+anything by itself. More favorable candles keep extending the run. Ignored
+candles preserve it, including ignored candles with a counter-direction body.
+
+The first ordinary counter-direction candle ends and resets the run. It creates
+an exit request only when the completed count is >= minimum_candles_in_sequence,
+the position's profit-floor activation has occurred, and CURRENT net profit is
+positive. If the run is too short, start from zero; separate runs never add up.
+There is no old two-sequence origin-cancellation rule. A deep counter candle can
+still trigger an exit if the position remains net-positive at the current quote.
+
+position_minimum_profit_floor has exactly Scrubber's activation semantics:
+  Net = OrderProfit + OrderSwap + OrderCommission - estimated exit commission.
+  Check each received tick against the configured net pips, using broker tick
+  value, tick size and position lots. Once reached, activation is permanent for
+  that ticket. A later exit may happen below the activation floor, provided net
+  profit remains positive. Zero means any positive net profit arms the position.
+
+The minimum sequence condition applies to each run, not permanently to the
+position. Profit activation is permanent. If a qualifying reversal occurs while
+unarmed or nonpositive, it is not saved for a later profit recovery: another
+qualifying run and ordinary counter candle are required. No future candle is
+used, and favorable/ignored candles cannot create a new exit signal.
+
+Pre-close break-even protection
+-------------------------------
+For an accepted eligible exit, the EA performs these steps on that ticket:
+  1. Recheck current quote and net profit.
+  2. Compute an SL whose projected NET profit is at least zero after signed
+     swap, booked commission and the same estimated exit commission reserve.
+     This can differ from OrderOpenPrice. Handle account-base inverse FX
+     conversion, and round toward profit to the broker tick/price precision.
+  3. If there is no equally strong or tighter stop, and broker stop/freeze
+     distances permit it, call OrderModify to install the break-even SL.
+  4. Refresh quotes and reselect the order: it may already have stopped out
+     during the modification round trip. If still open and net-positive,
+     attempt OrderClose immediately. Never send a duplicate close for a ticket
+     confirmed closed during that round trip.
+
+An unchanged or stronger existing SL is retained without a redundant request.
+Protection is installed only when an exit is due; this is not percentage or
+continuous profit trailing. Later retries may tighten it if rollover/fees change,
+but never deliberately loosen it. Existing take-profit prices are preserved.
+
+If the stop cannot be valued, violates broker distance rules, or OrderModify
+fails, log the reason and still attempt the market close immediately. Installing
+a backup stop must not delay the intended exit while waiting for favorable stop
+conditions. This means some market closes can proceed without a backup SL.
+
+A rejected close is retried after two server seconds. Profit is checked again
+before each attempt. The accepted exit remains pending if net profit turns
+negative, and retries when positive again. A successfully installed backup SL
+remains at the broker during that wait. Stop and close are separate requests:
+price can gap, slippage can exceed modeled values, or actual fees can differ.
+Neither a break-even SL nor a positive pre-send estimate guarantees a nonnegative
+actual fill. The extra modification round trip also adds latency to a market exit.
+
+ExitCommissionPerLot=-1 reserves abs(negative booked commission); 0 assumes
+closing commission is prepaid; positive values reserve that amount per lot in
+account currency. Future swap/commission changes are not known in advance.
+
+State, upgrades and diagnostics
+------------------------------
+Normal live restarts retain per-ticket permanent activation, sequence count,
+last processed candle, accepted exit and its triggering run length in terminal
+globals. Tester passes do not read/write live globals. A commit marker rejects
+incomplete state. Deinitialization flushes globals; an abrupt crash can lose
+unflushed updates. Missing state starts counts from attachment and requires
+profit activation to be observed again. Existing broker stops are preserved.
+
+On upgrading from v1, preserve activation and previously accepted exits, but
+reset old two-run counts: they were not built with the new candle filters.
+Changing DojiBodyPips resets sequence counts while preserving activation and
+accepted exits. Changing minimum_candles_in_sequence applies the new threshold
+to the current count; it does not revoke an already accepted close request.
+
+When several candles were missed, available candles rebuild counts in order.
+Old historical exit signals are not executed; only the latest completed candle
+may generate a new exit using current profit. Missing processed timestamps or
+more than 10000 missed bars reset counts with an action log.
+
+Logs include POSITION_ARMED, CANDLE_EXIT_TRIGGER, BREAK_EVEN_SET/FAILED/DEFERRED/
+UNAVAILABLE, POSITION_CLOSED, retries/errors, state changes and pending operations.
+Exit logs include ticket, current net, sequence_count, exit_sequence_count and
+minimum_candles. Counts normally reset on the triggering counter candle, so
+exit_sequence_count records the length that actually caused the request.
+EnableDebugPrints adds quotes, spread and activation threshold. There are no
+per-tick hold, mean/stddev, candle classification or count-increment prints.
+
+Validation
+----------
+  python3 tests/candletaker/run_tests.py
+
+Runs actual EA event handlers against a deterministic MT4 API/broker shim with
+AddressSanitizer and UndefinedBehaviorSanitizer. Covers exact inside/outside/doji
+boundaries; 40000 randomized OHLC transitions; 40000 linear/inverse break-even
+calculations; independent positions; commission/swap and lot scaling; modify-
+before-close ordering; protection rejection/distance failures; quote changes and
+broker SL fills between requests; close retries; unchanged/stronger stops;
+restarts/v1 migration; history gaps; grid, spread, Friday, ownership and scoring.
+Pure profit-floor, price-rounding and grid functions are compared to Scrubber.
+
+These checks do not replace MetaEditor compilation, StrategyTester, or broker
+integration testing. Native MetaEditor is not available in this development
+workspace. Compile both source and its new include before running your next test.
+
+Primary API references
+----------------------
+https://docs.mql4.com/trading/ordermodify
+https://book.mql4.com/appendix/limits
+https://docs.mql4.com/runtime/testing
